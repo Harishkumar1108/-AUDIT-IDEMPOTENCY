@@ -1,0 +1,45 @@
+{
+  "name": "payment-idempotency-backend",
+  "version": "1.0.0",
+  "description": "Node.js and Express backend with Prisma PostgreSQL idempotency and event logging",
+  "main": "src/server.ts",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "test:webhook": "tsx scripts/test-webhook.ts",
+    "test:chaos": "tsx scripts/test-chaos.ts",
+    "test:all": "tsx scripts/test-webhook.ts && tsx scripts/test-chaos.ts",
+    "reset:data": "tsx scripts/reset-data.ts",
+    "client:dev": "npm --prefix client run dev",
+    "client:build": "npm --prefix client run build"
+  },
+  "keywords": [
+    "express",
+    "prisma",
+    "postgresql",
+    "idempotency",
+    "webhooks"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/client": "^6.4.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.10",
+    "prisma": "^6.4.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
