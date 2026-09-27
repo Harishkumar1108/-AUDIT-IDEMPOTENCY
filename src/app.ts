@@ -9,7 +9,7 @@ import { errorHandler } from './middleware/errorHandler';
 import { prisma } from './prisma';
 import { clearAuditFeed } from './services/auditFeed';
 
-export const app = express();
+const app = express();
 
 // Middlewares
 app.use(cors());
@@ -65,3 +65,32 @@ app.use('/api/simulate-chaos', chaosRouter);
 
 // Global Error Handler
 app.use(errorHandler);
+
+// 1. Conditional Port Listening (executes only when running locally, never on Vercel/serverless)
+const isServerless =
+  process.env.VERCEL === '1' ||
+  Boolean(process.env.VERCEL_ENV) ||
+  Boolean(process.env.NOW_REGION) ||
+  Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+if (!isServerless && process.env.NODE_ENV !== 'production') {
+  if (typeof require !== 'undefined' && require.main === module) {
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+      console.log(`🚀 Payment Idempotency Backend running on port ${PORT}`);
+      console.log(`👉 Webhook endpoint: POST http://localhost:${PORT}/api/webhooks`);
+      console.log(`👉 Health check:      GET  http://localhost:${PORT}/health`);
+    });
+  }
+}
+
+// 2. Proper Serverless Export
+export default app;
+export { app };
+
+// CommonJS export compatibility for Vercel serverless runtime
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = app;
+  module.exports.default = app;
+  module.exports.app = app;
+}

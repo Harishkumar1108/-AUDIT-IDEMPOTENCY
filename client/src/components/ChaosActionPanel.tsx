@@ -32,7 +32,16 @@ export const ChaosActionPanel: React.FC<ChaosActionPanelProps> = ({
       });
 
       if (!response.ok) {
-        throw new Error(`Simulation failed with HTTP status ${response.status}`);
+        let errorMsg = `Simulation failed with HTTP status ${response.status}`;
+        try {
+          const errData = await response.json();
+          if (errData?.message || errData?.error) {
+            errorMsg = errData.message || errData.error;
+          }
+        } catch {
+          // Keep fallback message
+        }
+        throw new Error(errorMsg);
       }
 
       const data: ChaosResponse = await response.json();

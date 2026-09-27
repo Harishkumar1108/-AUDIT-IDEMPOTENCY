@@ -38,16 +38,44 @@ async function dispatchWebhook(port: number, payload: any, idempotencyHeader?: s
     headers['Idempotency-Key'] = idempotencyHeader;
   }
 
-  const response = await fetch(`http://localhost:${port}/api/webhooks`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-  });
+  const urls = [
+    `http://127.0.0.1:${port}/api/webhooks`,
+    `http://localhost:${port}/api/webhooks`,
+  ];
 
-  const body = await response.json();
+  let lastError: any;
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      });
+
+      let body: any;
+      const text = await response.text();
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = { raw: text };
+      }
+
+      return {
+        httpStatus: response.status,
+        body,
+      };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  console.error('[Chaos Simulator] Internal webhook dispatch failed:', lastError);
   return {
-    httpStatus: response.status,
-    body,
+    httpStatus: 500,
+    body: {
+      success: false,
+      error: lastError?.message || 'Failed to dispatch webhook internally',
+    },
   };
 }
 
@@ -674,9 +702,10 @@ async function runFullSuite(port: number) {
     });
   }
 
-  // Also run the double blast and out-of-order test verifications for test-chaos assertion compatibility
-  const [doubleOutput, orderOutput] = await Promise.all([
+  // Also run the double blast, legacy duplicate blast, and out-of-order test verifications for test-chaos assertion compatibility
+  const [doubleOutput, blastOutput, orderOutput] = await Promise.all([
     runDoubleBlast(port),
+    runDuplicateBlast(port),
     runOutOfOrder(port),
   ]);
 
@@ -695,10 +724,16 @@ async function runFullSuite(port: number) {
       customersAssigned: names,
     },
     doubleOutput,
+    blastOutput,
     orderOutput,
     insertedIds,
-    generatedEvents: [...generatedEvents, ...doubleOutput.generatedEvents, ...orderOutput.generatedEvents],
-    allPassed: true,
+    generatedEvents: [
+      ...generatedEvents,
+      ...doubleOutput.generatedEvents,
+      ...blastOutput.generatedEvents,
+      ...orderOutput.generatedEvents,
+    ],
+    allPassed: doubleOutput.doublePassed && blastOutput.blastPassed && orderOutput.orderPassed,
   };
 }
 
@@ -823,14 +858,25 @@ async function runDuplicateBlast(port: number) {
  */
 chaosRouter.post('/', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const port = Number(process.env.PORT) || 3000;
-    const rawScenario = (req.body?.mode || req.body?.scenario || 'double_blast').toString().trim().toLowerCase();
+    const port = (req.socket && req.socket.localPort) || Number(process.env.PORT) || 3000;
+    
+    // Safely extract and normalize scenario / mode parameter from diverse possible request shapes
+    const modeInput =
+      (typeof req.body?.mode === 'string' && req.body.mode) ||
+      (typeof req.body?.scenario === 'string' && req.body.scenario) ||
+      (typeof req.body?.type === 'string' && req.body.type) ||
+      (typeof req.body?.chaosType === 'string' && req.body.chaosType) ||
+      (typeof req.body?.chaos_type === 'string' && req.body.chaos_type) ||
+      (typeof req.body?.mode === 'number' && String(req.body.mode)) ||
+      'double_blast';
+
+    const rawScenario = modeInput.trim().toLowerCase().replace(/[\s-]+/g, '_');
 
     // Map scenario aliases
-    const isDoubleBlast = rawScenario === 'double_blast';
-    const isOutOfOrder = rawScenario === 'out_of_order';
-    const isFullSuite = rawScenario === 'full_suite' || rawScenario === 'all';
-    const isLegacyDuplicateBlast = rawScenario === 'duplicate_blast';
+    const isDoubleBlast = ['double_blast', 'double', 'doubleblast'].includes(rawScenario);
+    const isOutOfOrder = ['out_of_order', 'outoforder', 'order'].includes(rawScenario);
+    const isFullSuite = ['full_suite', 'fullsuite', 'full', 'suite', 'all'].includes(rawScenario);
+    const isLegacyDuplicateBlast = ['duplicate_blast', 'duplicate', 'blast'].includes(rawScenario);
 
     const report: Record<string, any> = {
       timestamp: new Date().toISOString(),
@@ -869,7 +915,7 @@ chaosRouter.post('/', async (req: Request, res: Response, next: NextFunction): P
     } else if (isFullSuite) {
       const suiteOutput = await runFullSuite(port);
       report.results.fullSuite = suiteOutput.scenarioResult;
-      report.results.duplicateBlast = suiteOutput.doubleOutput.scenarioResult;
+      report.results.duplicateBlast = suiteOutput.blastOutput.scenarioResult;
       report.results.doubleBlast = suiteOutput.doubleOutput.scenarioResult;
       report.results.outOfOrderChaos = suiteOutput.orderOutput.scenarioResult;
       report.executionResults = suiteOutput.doubleOutput.executionResults;
@@ -891,8 +937,9 @@ chaosRouter.post('/', async (req: Request, res: Response, next: NextFunction): P
       report.allPassed = blastOutput.blastPassed;
     } else {
       res.status(400).json({
-        error: 'Invalid scenario requested',
-        validScenarios: ['double_blast', 'out_of_order', 'full_suite'],
+        success: false,
+        error: `Invalid scenario '${rawScenario}' requested`,
+        validScenarios: ['double_blast', 'out_of_order', 'full_suite', 'duplicate_blast'],
       });
       return;
     }
@@ -901,7 +948,12 @@ chaosRouter.post('/', async (req: Request, res: Response, next: NextFunction): P
       message: `Chaos simulation (${rawScenario}) completed successfully.`,
       ...report,
     });
-  } catch (error) {
-    next(error);
+  } catch (error: any) {
+    console.error('[Chaos Simulator Internal Error]:', error);
+    res.status(500).json({
+      success: false,
+      error: error?.name || 'SimulationError',
+      message: error?.message || 'Chaos injection encountered an internal error',
+    });
   }
 });
